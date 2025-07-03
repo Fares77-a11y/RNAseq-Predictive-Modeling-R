@@ -1,5 +1,5 @@
 ---
-title: "Assignment 3"
+title: "RNAseq_Classification_Analysis"
 author: "Fares Ibrahim"
 date: "01/11/2024"
 output:
@@ -12,7 +12,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Question 1
+
 
 ```{r Q1 code, message = FALSE}
 #Load necessary packages
@@ -50,7 +50,7 @@ dds <- estimateSizeFactors(dds)
 normCounts <- vst(dds, blind = FALSE)
 ```
 
-## Question 2
+
 
 ```{r Q2 code, message = FALSE}
 # Load necessary packages
@@ -97,7 +97,7 @@ summary(dtModel$fit)
 
 ```
 
-## Question 3
+
 
 ```{r Q3 code, message = FALSE}
 # Load necessary packages
