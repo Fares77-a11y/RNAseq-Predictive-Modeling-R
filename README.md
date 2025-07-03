@@ -46,6 +46,9 @@ RNAseq-Classification-Models/
 │   └── RNAseq_Classification_Analysis.Rmd
 ├── results/
 │   └── model_performance_comparison.csv
+├── data/
+│   └── a23farib_rnaseq.txt
+
 ```
 
 ---
