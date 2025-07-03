@@ -1,0 +1,281 @@
+---
+title: "Assignment 3"
+author: "Fares Ibrahim"
+date: "01/11/2024"
+output:
+  prettydoc::html_pretty:
+    theme: tactile
+    highlight: github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+```{r Q1 code, message = FALSE}
+#Load necessary packages
+library(BioStudies)
+library(SummarizedExperiment)
+library(ArrayExpress)
+library(knitr)
+library(limma)
+library(edgeR)
+library(DESeq2)
+#Import data
+countTable <- read.table("data/a23farib_rnaseq.txt",
+                         header = TRUE, as.is = TRUE, row.names = 1, sep = "\t")
+# Display dimensions of the dataset
+dim(countTable)
+# Create a sample information data frame and define factor of cell lines
+sample_info <- data.frame(
+  sample_name = colnames(countTable),
+  CellLine = factor(c(rep("LineA", 5), rep("LineB", 10)))
+)
+# Calculate mean log2 CPM for filtering
+meanLog2CPM <- rowMeans(log2(cpm(countTable) + 1))
+# Plot histogram of mean log2 CPM
+hist(meanLog2CPM)
+#Filter out low count genes by calculating the mean log2 CPM, keeping genes with a value greater than 1
+library(edgeR)
+meanLog2CPM <- rowMeans(log2(cpm(countTable) + 1))
+countTable <- countTable[meanLog2CPM > 1, ]
+dim(countTable)
+
+#Create DESeq2 dataset and normalize
+library(DESeq2)
+dds <- DESeqDataSetFromMatrix(countTable, DataFrame(row.names = colnames(countTable)), ~ 1)
+dds <- estimateSizeFactors(dds)
+normCounts <- vst(dds, blind = FALSE)
+```
+
+## Question 2
+
+```{r Q2 code, message = FALSE}
+# Load necessary packages
+library(ggplot2)
+library(lattice)
+library(C50)
+library(caret)
+"Model fitting procedure"
+#Define custom SBF functions
+#score function for calculating coefficient of variation (CoV) for every feature
+rfSBF$score <- function(x, y){
+  sd(x) / mean(x)
+}
+#filter function ranking features by CoV and selecting the top 100 features
+rfSBF$filter <- function(score, x, y){
+  topCoV <- score > quantile(score, 0.9)
+  names(score) %in% names(score)[topCoV]
+}
+#Decision tree fit function (C5.0 model)
+dtSBF <- rfSBF
+dtSBF$fit <- function(x, y, ...){
+  loadNamespace("C50")
+  C50::C5.0(x = x, y = y)
+}
+
+#Create training set 
+trainingSet <- data.frame(t(assay(normCounts)))
+
+#Use dtSBF to define a sbfControl list and set the evaluation method to “loocv”
+#Train and validate decision tree 
+dtControl <- sbfControl(
+  functions = dtSBF,
+  method = "loocv",
+  saveDetails = TRUE,
+  verbose = FALSE)
+#perform classification analysis using the sbfControl list to obtain the decision tree model
+dtModel <- sbf(
+  trainingSet,
+  sample_info$CellLine,
+  sbfControl = dtControl)
+
+#Show model summary
+summary(dtModel$fit)
+
+```
+
+## Question 3
+
+```{r Q3 code, message = FALSE}
+# Load necessary packages
+library(ggplot2)
+library(lattice)
+library(C50)
+library(caret)
+library(randomForest)
+
+# Default Score function for Random Forest (ANOVA)
+rfSBF$score
+  
+#create a new score function choosing the AUC (Area Under the Curve) value for each
+#gene calculated using the pROC package for the classification of cell lines A and B
+
+rfSBF$score <- function(x, y){
+loadNamespace("pROC")
+pROC::auc(pROC::roc(y, x, quiet = TRUE))[1]
+}
+rfSBF$score
+# Default Filter function for Random Forest
+rfSBF$filter
+#Next creating a new filter function for Random Forest based on the top 100 scores (AUC values)
+rfSBF$filter <- function(score, x, y){
+top100 <- order(score, decreasing = TRUE)[1:100]
+top_genes<-names(score) %in% names(score)[top100]
+return(top_genes)
+}
+rfSBF$filter
+# Default Fit function (Random Forest)
+rfSBF$fit
+#creating the training 
+trainingSet <- data.frame(t(assay(normCounts)))
+# dim() to check the number of rows (samples) and columns (genes) after transposing
+dim(trainingSet)
+# Set random seed for reproducible results
+set.seed(123)
+# Setting training parameters (validation method, ...)
+rfControl <- sbfControl(
+functions = rfSBF,
+method = "loocv",
+saveDetails = TRUE,
+verbose = FALSE)
+# Training Random Forest using treatment as variable to use for classification
+rfModel <- sbf(
+trainingSet,
+sample_info$CellLine,
+sbfControl = rfControl)
+# Random Forest Summary
+summary(rfModel$fit) 
+#Show model
+rfModel$fit
+#Print Random Forest confusion matrix from validation 
+confusionMatrix(rfModel$pred$predictions$pred, sample_info$CellLine)
+
+#Print Decision Tree confusion matrix from validation 
+confusionMatrix(dtModel$pred$predictions$pred, sample_info$CellLine)
+
+
+```
+** Random Forest Outcome and Confusion Matrix Explained**
+_____________________________________________________________
+  Step 1: Identifying Key Model Characteristics:
+  ------------------------------------------------
+The output provides details about the model, such as:
+
+Type of random forest: Classification, which confirms that the model is performing a categorical classification (between cell lines A and B).
+Number of trees: 500, indicating that 500 decision trees were used in the ensemble to make predictions. A higher number of trees often improves the robustness and accuracy of the model but also increases computational load.
+Number of variables tried at each split: 10, which is the number of features randomly chosen at each split in a tree. This is a common feature selection technique in random forests to reduce overfitting and improve generalization.
+Step 2: Out-of-Bag (OOB) Estimate of Error Rate
+The OOB estimate of error rate is 0%. In a random forest, each tree is trained on a random subset of data, and the remaining data (out-of-bag samples) is used to validate that tree. Here, the OOB error rate of 0% suggests that the model had no misclassifications on the OOB samples, indicating very high accuracy on this dataset. This can imply that the model performed exceptionally well on the training data.
+
+Step 3: Interpreting the Confusion Matrix
+-------------------------------------------
+The confusion matrix provides a breakdown of the model's classification performance for each class. 
+Here’s the interpretation for each entry:
+
+True Positives for LineA: 5 samples were correctly classified as LineA.
+True Positives for LineB: 10 samples were correctly classified as LineB.
+False Positives / False Negatives: There are no misclassifications. All samples were predicted accurately, with no false positives or false negatives.
+
+Step 4: Class Error Rate
+--------------------------
+The class error rate for each line is 0%, indicating that all samples of each class (LineA and LineB) were perfectly classified by the model.
+
+Final Summary and Explanation
+The random forest model was trained on the dataset, "afarib23_rnaseq.txt" which constituted the two classes: LineA (5 samples) and LineB (10 samples). The RF constructed 500 trees, each considering 10 randomly selected features at each split. The model achieved an OOB error rate of 0%, and the confusion matrix shows that all samples were correctly classified with no errors. This suggests the model has learned to distinguish between LineA and LineB with perfect accuracy on the training data, possibly due to a clear distinction between the features of the two classes in this dataset. However, this level of accuracy might also raise questions about overfitting, which would require further validation on an independent test set to confirm.
+  
+
+
+** Decision Tree outcome and Confusion Matrix Explanation**
+  _________________________________________________________
+Part 1: Decision Tree Model Fitting Summary
+--------------------------------------------
+Model and Data Information:
+
+Model: C5.0 decision tree.
+Data: The model was trained on 15 cases (samples) with 336 attributes (features) from an unspecified dataset.
+Class Labels: The target variable is referred to as outcome, with classes LineA and LineB.
+
+Decision Tree Structure:
+The tree structure is based on one key feature (ENSG00000106852), a single gene expression threshold.
+Decision Rule:
+If "ENSG00000106852" is ≤ 4.386499, classify as LineB (10 samples).
+If "ENSG00000106852" > 4.386499, classify as LineA (5 samples).
+This tree has only one decision node, meaning it’s a very simple model that uses a single threshold to distinguish between LineA and LineB.
+
+Evaluation on Training Data:
+Error Rate: The training error is 0%, with no misclassifications among the 15 samples.
+
+Confusion Matrix:
+For LineA: 5 samples were correctly classified as LineA.
+For LineB: 10 samples were correctly classified as LineB.
+This perfect classification on the training set implies the model fits well on this data, though its simplicity might limit generalization to new data.
+
+Part 2: Confusion Matrix and Performance Metrics
+------------------------------------------------
+Confusion Matrix:
+
+Predicted classifications:
+LineA: 5 samples correctly classified as LineA, 3 misclassified as LineB.
+LineB: 7 samples correctly classified as LineB, with no misclassifications.
+This means that out of the 15 samples, 3 were misclassified, indicating an imperfect fit.
+
+Performance Metrics:
+Accuracy: 0.8 (or 80%), meaning the model correctly classified 80% of samples.
+95% Confidence Interval: (0.5191, 0.9567), indicating the likely range of the model's accuracy in repeated trials.
+No Information Rate: 0.6667, representing the accuracy of always predicting the majority class. The model’s accuracy (0.8) exceeds this, indicating that the model is learning useful patterns.
+Kappa: 0.6087, a measure of agreement between predicted and actual classifications, adjusted for chance. A Kappa around 0.6 suggests moderate agreement.
+Sensitivity (Recall for LineA): 1.0, meaning the model correctly identified all samples of LineA (100% sensitivity).
+Specificity (Recall for LineB): 0.7, meaning the model correctly identified 70% of LineB samples.
+Positive Predictive Value (Precision for LineA): 0.625, meaning 62.5% of samples predicted as LineA were actually LineA.
+Negative Predictive Value (Precision for LineB): 1.0, meaning all samples predicted as LineB were indeed LineB.
+Balanced Accuracy: 0.85, an average of sensitivity and specificity, providing a fairer measure for imbalanced classes.
+Final Summary of the Decision Tree Model
+This decision tree model achieved 80% accuracy on the dataset. It correctly identified all LineA samples (high sensitivity) but had some misclassification of LineB samples (lower specificity). The model used a single feature (ENSG00000106852) with a specific threshold to classify the samples, making it a simple model with a single decision rule.
+
+** Comparing Both Models**
+____________________________
+
+Step 1: Summary of Each Model’s Performance
+
+1. Random Forest Model
+-------------------------
+Accuracy: 100% (OOB error rate of 0%)
+Confusion Matrix:
+LineA: 5 correctly classified, 0 misclassified
+LineB: 10 correctly classified, 0 misclassified
+Class Error: 0% for both LineA and LineB
+This model perfectly classified all samples, indicating that it may have memorized the training data without any errors.
+2. Decision Tree Model
+-----------------------
+Accuracy: 80% (with a 95% confidence interval from 51.91% to 95.67%)
+Confusion Matrix:
+LineA: 5 correctly classified, 3 misclassified
+LineB: 7 correctly classified, 0 misclassified
+Balanced Accuracy: 85%
+Sensitivity (Recall) for LineA: 100%
+Specificity for LineA: 70%
+Kappa: 0.6087 (moderate agreement)
+This model made 3 misclassifications and had an accuracy of 80%, meaning it didn’t perform as well as the Random Forest on the training data.
+
+Step 2: Evaluating Against Blind Guessing
+
+In a blind guessing scenario, with no information about the cell lines, we could assume:
+
+Random Guessing: If we randomly guess between LineA and LineB, the probability of a correct guess is about 50% for each sample.
+Informed Guessing Based on Class Distribution: If we guess based on the class distribution (LineA has 5 samples, LineB has 10), we would guess LineB more frequently, leading to an expected accuracy of 66.67% (probability of guessing LineB correctly is 10/15, or 66.67%).
+Both models perform better than this blind guessing strategy:
+
+The Random Forest model’s 100% accuracy is far above both the 50% and 66.67% guessing benchmarks.
+The Decision Tree model’s 80% accuracy also surpasses these benchmarks, though not as dramatically.
+
+Step 3: Final Determination of Best Model
+
+The Random Forest model clearly performs best on this dataset, achieving perfect accuracy on the training set.
+Although the Decision Tree model shows good performance, with 80% accuracy and a balanced accuracy of 85%, it is not as accurate as the Random Forest.
+
+Conclusion
+The Random Forest model is the best performer between the two, achieving a perfect classification rate on the training data, and it is significantly better than blind guessing. However, the fact that the Random Forest achieved 100% accuracy on the training set might suggest it overfitted the data. To confirm the model's true performance, it would ideally need to be evaluated on an independent test set.
+
